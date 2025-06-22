@@ -25,8 +25,9 @@ VOLUME_MULTIPLE = 3
 MIN_QUOTE_VOL = 3_000_000      # ~$3 M
 
 # Telegram
-TELEGRAM_TOKEN = "8152368226:AAGFFfYGoQfwZ6BUIBkUO4QB1mkyxYY3nAU"
-CHAT_ID = "-1002789830102"
+import os
+TELEGRAM_TOKEN  = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID         = os.getenv("CHAT_ID")
 
 # Track last-alerted hour per symbol
 last_alert: dict[str, datetime.datetime] = {}
