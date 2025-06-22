@@ -67,7 +67,14 @@ def tg_send(text: str):
 
 
 def active_perps() -> list[str]:
-    info = session.get(f"{API}/fapi/v1/exchangeInfo", timeout=10).json()
+    r = session.get(f"{API}/fapi/v1/exchangeInfo", timeout=10)
+    if r.status_code != 200:
+        print("Binance HTTP", r.status_code, r.text[:120])
+        return []
+    info = r.json()
+    if "symbols" not in info:          # <— add
+        print("Unexpected response:", str(info)[:200])
+        return []
     return [
         s["symbol"] for s in info["symbols"]
         if s["contractType"] == "PERPETUAL"
