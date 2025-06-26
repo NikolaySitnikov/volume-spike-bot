@@ -7,6 +7,8 @@ import pytz
 from collections import deque
 from dateutil.parser import parse as dateutil_parse
 import socket
+import os
+HEADERS = os.getenv("HEADERS")
 
 # Flask app setup
 app = Flask(__name__)
@@ -23,25 +25,6 @@ CHANNELS = [
     {"id": "1266047163297828904", "name": "all-trades"}
 ]
 CHANNEL_URL_TEMPLATE = "https://discord.com/api/v9/channels/{channel_id}/messages?limit=50"
-HEADERS = {
-    "accept": "*/*",
-    "accept-language": "en-US,en;q=0.9,ru;q=0.8,es;q=0.7",
-    "authorization": "ODg2MDkyNDA1NTcxNDU3MDQ0.GnT-3d.G1pWUhU1qh4IWk3BwiM5-QIFps9hc0V9HPPxdI",
-    "cookie": "__dcfduid=619d2160f0b111ef9b3d21e74ef23cff; __sdcfduid=619d2161f0b111ef9b3d21e74ef23cffe215c4cc65d66e0dcb7f02ec0c8001b93bd72c8d9229d1d35c7d6a89d948b97f; locale=en-US; _gcl_au=1.1.32599864.1740183013; _ga=GA1.1.1715759669.1740183013; __cfruid=8e49c5a45f7ded256f70625e273815f045f355aa-1740361346; _cfuvid=qqwUqY6K5bGaO0A5LAQ7mPEg.UMeojUrEK6HW2EEYlk-1740361346273-0.0.1.1-604800000; OptanonConsent=isIABGlobal=false&datestamp=Sun+Feb+23+2025+20%3A42%3A38+GMT-0500+(Eastern+Standard+Time)&version=6.33.0&hosts=&landingPath=https%3A%2F%2Fdiscord.com%2F&groups=C0001%3A1%2CC0002%3A1%2CC0003%3A1; _ga_Q149DFWHT7=GS1.1.1740361358.2.0.1740361362.0.0.0; cf_clearance=I_x7VFs89DQu0nW92cNnSPUx11dKih1Ub5gHzSfyVtU-1740521798-1.2.1.1-n5UiRkUCekY8fpFovdnoq_ToUhk65P7tnTXmjRdfuhiHteycLPlANYkYn9JreuQ2_3eeFsS6geN.UvgwdzbnMPv.LGbeboi8E9PirCUuFHLltgCMjFkrH8Nz2H6myPloEiIFLeyB8lN2dj_UBi_Xus9xgFkLkD3vcao0yuq3yeeT9ipskc20vmx3F2SZVp1kXtheR3UlZiKdbqcrHCtA6wpWCKEduekHZ1pWEeikdmx60.yjMJG_NmLrQNXxFAY0lsCloED7vzmlqBmFffR4STSwHgExYfY2Iiqu9CKw.oU",
-    "priority": "u=1, i",
-    "referer": "https://discord.com/channels/1265665638467113101/1266047163297828904",
-    "sec-ch-ua": '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"macOS"',
-    "sec-fetch-dest": "empty",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-origin",
-    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-    "x-debug-options": "bugReporterEnabled",
-    "x-discord-locale": "en-US",
-    "x-discord-timezone": "America/Cancun",
-    "x-super-properties": "eyJvcyI6Ik1hYyBPUyBYIiwiYnJvd3NlciI6IkNocm9tZSIsImRldmljZSI6IiIsInN5c3RlbV9sb2NhbGUiOiJlbi1VUyIsImJyb3dzZXJfdXNlcl9hZ2VudCI6Ik1vemlsbGEvNS4wIChNYWNpbnRvc2g7IEludGVsIE1hYyBPUyBYIDEwXzE1XzcpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xMzMuMC4wLjAgU2FmYXJpLzUzNy4zNiIsImJyb3dzZXJfdmVyc2lvbiI6IjEzMy4wLjAuMCIsIm9zX3ZlcnNpb24iOiIxMC4xNS43IiwicmVmZXJyZXIiOiJodHRwczovL2Rpc2NvcmQuY29tL2NoYW5uZWxzL0BtZS84NjM0NzU3NzI2MDEyNzAyOTIiLCJyZWZlcnJpbmdfZG9tYWluIjoiZGlzY29yZC5jb20iLCJyZWZlcnJlcl9jdXJyZW50IjoiIiwicmVmZXJyaW5nX2RvbWFpbl9jdXJyZW50IjoiIiwicmVsZWFzZV9jaGFubmVsIjoic3RhYmxlIiwiY2xpZW50X2J1aWxkX251bWJlciI6MzcxODE1LCJjbGllbnRfZXZlbnRfc291cmNlIjpudWxsLCJoYXNfY2xpZW50X21vZHMiOmZhbHNlfQ=="
-}
 
 # Telegram configuration with new bot and channel
 TELEGRAM_BOT_TOKEN = "7673376661:AAHs54ap5sz8-oupzbPdeQlHnBOpIrLrLSE"
