@@ -8,7 +8,12 @@ from collections import deque
 from dateutil.parser import parse as dateutil_parse
 import socket
 import os
-HEADERS = os.getenv("HEADERS")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+HEADERS = {
+    "Authorization": f"Bot {DISCORD_TOKEN}",
+    "User-Agent": "DiscordBot (volume-spike, 1.0)",
+    "Accept": "application/json"
+}
 
 # Flask app setup
 app = Flask(__name__)
