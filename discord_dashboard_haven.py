@@ -7,6 +7,7 @@ import pytz
 from collections import deque
 from dateutil.parser import parse as dateutil_parse
 import socket
+import os
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Flask app setup
