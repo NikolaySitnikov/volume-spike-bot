@@ -2,18 +2,44 @@ import requests
 from flask import Flask, render_template, jsonify
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 from collections import deque
-from dateutil.parser import parse  # To parse ISO 8601 timestamps
-import os
+from dateutil.parser import parse as dateutil_parse
+import socket
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-# Define channel IDs and URLs
-CHANNEL_1_ID = "689840724094484552"  # Original channel
-CHANNEL_2_ID = "689840762786939112"  # New channel
-CHANNEL_URL_TEMPLATE = "https://discord.com/api/v9/channels/{channel_id}/messages?limit=50"
+# Flask app setup
+app = Flask(__name__)
+MAX_MESSAGES = 1000  # Increased for better capacity
+messages = deque(maxlen=MAX_MESSAGES)
+messages_lock = threading.Lock()
+sent_to_telegram = set()  # Track messages sent to Telegram
+initial_fetch_complete = False  # Flag to track initial fetch completion
+initial_message_ids = set()  # Track IDs from initial fetch
 
-# Headers for API requests
+# Discord API configuration
+CHANNELS = [
+    {"id": "689840724094484552", "name": "market-discussion"},
+    {"id": "689840762786939112", "name": "member-questions"},
+    {"id": "689841638192971847", "name": "charts-ub"},
+    {"id": "1326724635080790097", "name": "trade-ideas-ub"},
+    {"id": "757352058511818903", "name": "market-analysis-pierre"},
+    {"id": "689841443061366941", "name": "trade-ideas-pierre"},
+    {"id": "955505963094401124", "name": "chart-requests"},
+    {"id": "1250256325875732572", "name": "2025-journal-the-last-dance"},
+    {"id": "838227564006211595", "name": "loma-market-thoughts-and-inner-monologues"},
+    {"id": "689841157324144660", "name": "charts"},
+    {"id": "689841172495073386", "name": "trade-ideas-krillin"},
+    {"id": "783261368434032670", "name": "intraday-plan"},
+    {"id": "1022871989007954051", "name": "macro-plan"},
+    {"id": "1108872241707499601", "name": "charts-maybe"},
+    {"id": "1108872466887098438", "name": "crypto-trade-ideas-mayne"},
+    {"id": "1327412971458269226", "name": "tradfi-2025"},
+    {"id": "1327413122847215616", "name": "leverage-trades-2025"},
+    {"id": "1327413038734905354", "name": "spot-crypto-2025"}
+]
+CHANNEL_URL_TEMPLATE = "https://discord.com/api/v9/channels/{channel_id}/messages?limit=50"
 HEADERS = {
     "accept": "*/*",
     "accept-language": "en-US,en;q=0.9,ru;q=0.8,es;q=0.7",
@@ -31,23 +57,24 @@ HEADERS = {
     "x-debug-options": "bugReporterEnabled",
     "x-discord-locale": "en-US",
     "x-discord-timezone": "America/Cancun",
-    "x-super-properties": "eyJvcyI6Ik1hYyBPUyBYIiwiYnJvd3NlciI6IkNocm9tZSIsImRldmljZSI6IiIsInN5c3RlbV9sb2NhbGUiOiJlbi1VUyIsImJyb3dzZXJfdXNlcl9hZ2VudCI6Ik1vemlsbGEvNS4wIChNYWNpbnRvc2g7IEludGVsIE1hYyBPUyBYIDEwXzE1XzcpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xMzMuMC4wLjAgU2FmYXJpLzUzNy4zNiIsImJyb3dzZXJfdmVyc2lvbiI6IjEzMy4wLjAuMCIsIm9zX3ZlcnNpb24iOiIxMC4xNS43IiwicmVmZXJyZXIiOiJodHRwczovL2Rpc2NvcmQuY29tL2NoYW5uZWxzL0BtZS84NjM0NzU3NzI2MDEyNzAyOTIiLCJyZWZlcnJpbmdfZG9tYWluIjoiZGlzY29yZC5jb20iLCJyZWZlcnJlcl9jdXJyZW50IjoiIiwicmVmZXJyaW5nX2RvbWFpbl9jdXJyZW50IjoiIiwicmVsZWFzZV9jaGFubmVsIjoic3RhYmxlIiwiY2xpZW50X2J1aWxkX251bWJlciI6MzcxNzA2LCJjbGllbnRfZXZlbnRfc291cmNlIjpudWxsLCJoYXNfY2xpZW50X21vZHMiOmZhbHNlfQ=="
+    "x-super-properties": "eyJvcyI6Ik1hYyBPUyBYIiwiYnJvd3NlciI6IkNocm9tZSIsImRldmljZSI6IiIsinN5c3RlbV9sb2NhbGUiOiJlbi1VUyIsImJyb3dzZXJfdXNlcl9hZ2VudCI6Ik1vemilsbGEvNS4wIChNYWNpbnRvc2g7IEludGVsIE1hYyBPUyBYIDEwXzE1XzcpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xMzMuMC4wLjAgU2FmYXJpLzUzNy4zNiIsImJyb3dzZXJfdmVyc2lvbiI6IjEzMy4wLjAuMCIsIm9zX3ZlcnNpb24iOiIxMC4xNS43IiwicmVmZXJyZXIiOiJodHRwczovL2Rpc2NvcmQuY29tL2NoYW5uZWxzL0BtZS84NjM0NzU3NzI2MDEyNzAyOTIiLCJyZWZlcnJpbmdfZG9tYWluIjoiZGlzY29yZC5jb20iLCJyZWZlcnJlcl9jdXJyZW50IjoiIiwicmVmZXJyaW5nX2RvbWFpbl9jdXJyZW50IjoiIiwicmVsZWFzZV9jaGFubmVsIjoic3RhYmxlIiwiY2xpZW50X2J1aWxkX251bWJlciI6MzcxNzA2LCJjbGllbnRfZXZlbnRfc291cmNlIjpudWxsLCJoYXNfY2xpZW50X21vZHMiOmZhbHNlfQ=="
 }
 
-ALLOWED_USERS = [
-    "lsdinmycoffee",
-    "pierre_crypt0",
-    "coldbloodedshiller",
-    "cryptoub",
-    "loma"  # Added from second channel response
-]
+# Telegram configuration with toggle
+TELEGRAM_BOT_TOKEN = "8134449717:AAEtPP5ap34Wxle6yFUeY7DbWqZA2K2jCV4"
+TELEGRAM_CHANNEL_ID = "-1002428336078"
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+TELEGRAM_ENABLED = 1  # 0 to disable, 1 to enable Telegram functionality
 
-app = Flask(__name__)
-MAX_MESSAGES = 100
-messages = deque(maxlen=MAX_MESSAGES)
-messages_lock = threading.Lock()  # Thread-safe access to messages
+# Allowed users
+ALLOWED_USERS = ["lsdinmycoffee",
+                 "pierre_crypt0",
+                 "coldbloodedshiller",
+                 "cryptoub",
+                 "loma",
+                 "officialtradermayne"]
 
-# Fetch channel names using Discord API
+# Fetch channel name from Discord API
 
 
 def get_channel_name(channel_id):
@@ -55,79 +82,219 @@ def get_channel_name(channel_id):
         url = f"https://discord.com/api/v9/channels/{channel_id}"
         response = requests.get(url, headers=HEADERS)
         response.raise_for_status()
-        channel_data = response.json()
-        return channel_data.get('name', f"Channel {channel_id}")
+        return response.json().get('name', f"Channel {channel_id}")
     except requests.exceptions.RequestException as e:
         print(f"Error fetching channel name for ID {channel_id}: {e}")
         return f"Channel {channel_id}"
 
 
-# Get channel names at startup
-CHANNEL_1_NAME = get_channel_name(CHANNEL_1_ID)
-CHANNEL_2_NAME = get_channel_name(CHANNEL_2_ID)
-print(f"Channel 1 Name: {CHANNEL_1_NAME}")
-print(f"Channel 2 Name: {CHANNEL_2_NAME}")
+# Initialize channel names
+CHANNELS = [
+    {"id": "689840724094484552", "name": get_channel_name(
+        "689840724094484552")},  # market-discussion
+    {"id": "689840762786939112", "name": get_channel_name(
+        "689840762786939112")},   # member-questions
+    {"id": "689841638192971847", "name": get_channel_name(
+        "689841638192971847")},   # charts-ub
+    {"id": "1326724635080790097", "name": get_channel_name(
+        "1326724635080790097")},  # trade-ideas-ub
+    {"id": "757352058511818903", "name": get_channel_name(
+        "757352058511818903")},  # market-analysis-pierre
+    {"id": "689841443061366941", "name": get_channel_name(
+        "689841443061366941")},  # trade-ideas-pierre
+    {"id": "955505963094401124", "name": get_channel_name(
+        "955505963094401124")},  # chart-requests
+    {"id": "1250256325875732572", "name": get_channel_name(
+        "1250256325875732572")},  # 2025-journal-the-last-dance
+    # loma-market-thoughts-and-inner-monologues
+    {"id": "838227564006211595",
+        "name": get_channel_name("838227564006211595")},
+    {"id": "689841157324144660", "name": get_channel_name(
+        "689841157324144660")},  # charts
+    {"id": "689841172495073386", "name": get_channel_name(
+        "689841172495073386")},  # trade-ideas-krillin
+    {"id": "783261368434032670", "name": get_channel_name(
+        "783261368434032670")},  # intraday-plan
+    {"id": "1022871989007954051", "name": get_channel_name(
+        "1022871989007954051")},  # macro-plan
+    {"id": "1108872241707499601", "name": get_channel_name(
+        "1108872241707499601")},  # charts-maybe
+    {"id": "1108872466887098438", "name": get_channel_name(
+        "1108872466887098438")},  # crypto-trade-ideas-mayne
+    {"id": "1327412971458269226", "name": get_channel_name(
+        "1327412971458269226")},  # tradfi-2025
+    {"id": "1327413122847215616", "name": get_channel_name(
+        "1327413122847215616")},  # leverage-trades-2025
+    {"id": "1327413038734905354", "name": get_channel_name(
+        "1327413038734905354")}  # spot-crypto-2025
+]
+print("Initialized Channels:", {ch["id"]: ch["name"] for ch in CHANNELS})
+
+# Parse timestamp with timezone awareness
 
 
 def parse_timestamp(timestamp_str):
-    """Parse ISO 8601 timestamp string into a datetime object."""
-    return parse(timestamp_str)
+    """Parse ISO 8601 timestamp string into an offset-aware datetime object."""
+    dt = dateutil_parse(timestamp_str)
+    if dt.tzinfo is None:
+        # If no timezone, assume UTC (common for Discord)
+        dt = dt.replace(tzinfo=pytz.UTC)
+    return dt
+
+# Send message to Telegram with rate limit handling and toggle
 
 
-def fetch_messages(channel_id, channel_name):
-    channel_url = CHANNEL_URL_TEMPLATE.format(channel_id=channel_id)
-    last_message_id = None
-    while True:
-        try:
-            url = channel_url if not last_message_id else f"{channel_url}&after={last_message_id}"
-            response = requests.get(url, headers=HEADERS)
-            response.raise_for_status()
-            new_messages = response.json()
-            if new_messages:
-                # Collect all new messages and sort by timestamp
-                valid_messages = []
-                for msg in reversed(new_messages):
-                    username = msg.get('author', {}).get('username', 'Unknown')
-                    if username in ALLOWED_USERS:
-                        attachments = [
-                            {"url": att.get("url", ""), "filename": att.get(
-                                "filename", ""), "content_type": att.get("content_type", "")}
-                            for att in msg.get("attachments", [])
-                        ]
-                        message_data = {
-                            "id": msg.get('id'),
-                            "username": username,
-                            "display_name": msg.get('author', {}).get('global_name', 'Unknown'),
-                            "content": msg.get('content', ''),
-                            "timestamp": msg.get('timestamp', ''),
-                            "attachments": attachments,
-                            "channel": channel_name
-                        }
-                        valid_messages.append(message_data)
-
-                # Sort messages by timestamp (oldest to newest)
-                valid_messages.sort(
-                    key=lambda x: parse_timestamp(x['timestamp']))
-
-                with messages_lock:  # Ensure thread-safe updates
-                    for msg in valid_messages:
-                        if not any(m['id'] == msg['id'] for m in messages):
-                            messages.append(msg)
-
-                last_message_id = new_messages[0]['id']
-        except requests.exceptions.RequestException as e:
+def send_to_telegram(message):
+    if TELEGRAM_ENABLED == 0:
+        print("Telegram functionality is disabled.")
+        return
+    local_tz = datetime.now().astimezone().tzinfo
+    utc_time = parse_timestamp(message['timestamp'])
+    local_time = utc_time.astimezone(local_tz)
+    formatted_timestamp = local_time.strftime('%Y-%m-%d %H:%M:%S')
+    telegram_message = (
+        f"{message['username']} ({message['display_name']}) [{message['channel']}] {formatted_timestamp}\n"
+        f"{message['content']}"
+    )
+    try:
+        response = requests.post(
+            TELEGRAM_API_URL,
+            json={"chat_id": TELEGRAM_CHANNEL_ID, "text": telegram_message},
+            timeout=10
+        )
+        response.raise_for_status()
+        print(f"Sent to Telegram: {telegram_message[:50]}...")
+    except requests.exceptions.RequestException as e:
+        if response and response.status_code == 429:
+            retry_after = response.json().get('parameters', {}).get('retry_after', 5)
             print(
-                f"Error fetching messages from {channel_name} at {datetime.now()}: {e}")
-        time.sleep(5)
+                f"Telegram rate limited. Retrying after {retry_after} seconds...")
+            time.sleep(retry_after)
+            send_to_telegram(message)  # Retry once
+        else:
+            print(f"Error sending to Telegram: {e}")
+    time.sleep(1)  # Slow sending to 1 message per second
+
+# Fetch messages from all channels in a single thread with 24-hour filter
 
 
-# Start threads for both channels
-thread1 = threading.Thread(target=fetch_messages, args=(
-    CHANNEL_1_ID, CHANNEL_1_NAME), daemon=True)
-thread2 = threading.Thread(target=fetch_messages, args=(
-    CHANNEL_2_ID, CHANNEL_2_NAME), daemon=True)
-thread1.start()
-thread2.start()
+def fetch_all_channels():
+    global initial_fetch_complete, initial_message_ids
+    # Track last message ID per channel
+    last_message_ids = {channel["id"]: None for channel in CHANNELS}
+    local_tz = datetime.now(pytz.utc).astimezone().tzinfo  # Get local timezone
+    twenty_four_hours_ago = datetime.now(
+        local_tz) - timedelta(hours=24)  # 24 hours ago in local time
+    initial_channels_processed = 0  # Counter for initial fetch completion
+
+    while True:
+        for channel in CHANNELS:
+            channel_id = channel["id"]
+            channel_name = channel["name"]
+            try:
+                url = CHANNEL_URL_TEMPLATE.format(channel_id=channel_id) if last_message_ids[channel_id] is None else \
+                    f"{CHANNEL_URL_TEMPLATE.format(channel_id=channel_id)}&after={last_message_ids[channel_id]}"
+                print(f"Fetching messages from {channel_name} with URL: {url}")
+                response = requests.get(url, headers=HEADERS)
+                response.raise_for_status()
+                new_messages = response.json()
+                print(
+                    f"Fetched {len(new_messages)} messages from {channel_name}")
+
+                if new_messages:
+                    valid_messages = []
+                    for msg in reversed(new_messages):
+                        username = msg.get('author', {}).get(
+                            'username', 'Unknown')
+                        msg_timestamp = parse_timestamp(
+                            msg.get('timestamp', ''))
+                        local_msg_time = msg_timestamp.astimezone(local_tz)
+                        print(
+                            f"Processing message from {channel_name} by {username} at {local_msg_time}")
+
+                        # Filter: Only include messages from ALLOWED_USERS within the last 24 hours
+                        if username in ALLOWED_USERS and local_msg_time >= twenty_four_hours_ago:
+                            attachments = [
+                                {"url": att.get("url", ""), "filename": att.get(
+                                    "filename", ""), "content_type": att.get("content_type", "")}
+                                for att in msg.get("attachments", [])
+                            ]
+                            message_data = {
+                                "id": msg.get('id'),
+                                "username": username,
+                                "display_name": msg.get('author', {}).get('global_name', 'Unknown'),
+                                "content": msg.get('content', ''),
+                                "timestamp": msg.get('timestamp', ''),
+                                "attachments": attachments,
+                                "channel": channel_name
+                            }
+                            valid_messages.append(message_data)
+                            print(
+                                f"Valid message from {channel_name}: {username} - {message_data['content'][:20]}... at {local_msg_time}")
+                        else:
+                            print(
+                                f"Discarded message from {channel_name} by {username}: Outside 24h or not allowed")
+
+                    with messages_lock:
+                        for msg in valid_messages:
+                            if not any(m['id'] == msg['id'] for m in messages):
+                                messages.append(msg)
+                                if last_message_ids[channel_id] is None:  # Initial fetch
+                                    initial_message_ids.add(msg['id'])
+                                print(
+                                    f"Added to deque from {channel_name}: {msg['username']} - {msg['content'][:20]}... at {msg['timestamp']}")
+
+                    last_message_ids[channel_id] = new_messages[0]['id']
+                    # Track initial fetch completion
+                    if last_message_ids[channel_id] is not None:
+                        initial_channels_processed += 1
+                        if initial_channels_processed >= len(CHANNELS) and not initial_fetch_complete:
+                            initial_fetch_complete = True
+                            print(
+                                "Initial fetch complete across all channels; Telegram sending enabled for new messages.")
+                else:
+                    print(f"No new messages from {channel_name}")
+                    # Handle case where a channel has no messages initially
+                    if last_message_ids[channel_id] is None:
+                        initial_channels_processed += 1
+                        if initial_channels_processed >= len(CHANNELS) and not initial_fetch_complete:
+                            initial_fetch_complete = True
+                            print(
+                                "Initial fetch complete (no messages in some channels); Telegram sending enabled for new messages.")
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching messages from {channel_name}: {e}")
+        time.sleep(5)  # Poll every 5 seconds for all channels
+
+# Centralized Telegram sender with 24-hour filter and initial skip
+
+
+def telegram_sender():
+    if TELEGRAM_ENABLED == 0:
+        print("Telegram sender thread disabled.")
+        while True:
+            # Sleep for an hour if disabled to reduce resource usage
+            time.sleep(3600)
+        return
+    while True:
+        with messages_lock:
+            local_tz = datetime.now(pytz.utc).astimezone().tzinfo
+            twenty_four_hours_ago = datetime.now(
+                local_tz) - timedelta(hours=24)
+            sorted_messages = sorted(
+                list(messages), key=lambda x: parse_timestamp(x['timestamp']))
+            new_messages = []
+            for msg in sorted_messages:
+                msg_timestamp = parse_timestamp(msg['timestamp'])
+                local_msg_time = msg_timestamp.astimezone(local_tz)
+                # Only send new messages after initial fetch, within 24 hours, and not from initial batch
+                if msg['id'] not in sent_to_telegram and initial_fetch_complete and local_msg_time >= twenty_four_hours_ago and msg['id'] not in initial_message_ids:
+                    new_messages.append(msg)
+            for msg in new_messages:
+                send_to_telegram(msg)
+                sent_to_telegram.add(msg['id'])
+        time.sleep(5)  # Check and send every 5 seconds
+
+# Flask routes
 
 
 @app.route('/')
@@ -138,13 +305,35 @@ def index():
 
 @app.route('/messages')
 def get_messages():
-    with messages_lock:  # Ensure thread-safe read
-        return jsonify(list(messages))
+    with messages_lock:
+        # Create a copy of the messages list to avoid modifying the original deque
+        messages_copy = [msg.copy() for msg in messages]
+        # Sort the copied messages by timestamp
+        sorted_messages = sorted(
+            messages_copy, key=lambda x: parse_timestamp(x['timestamp']))
+        local_tz = datetime.now().astimezone().tzinfo
+        for msg in sorted_messages:
+            utc_time = parse_timestamp(msg['timestamp'])
+            msg['timestamp'] = utc_time.astimezone(
+                local_tz).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"Serving {len(sorted_messages)} messages to dashboard")
+        return jsonify(sorted_messages)
 
+
+# Start message fetching and Telegram sender threads
+fetch_thread = threading.Thread(target=fetch_all_channels, daemon=True)
+telegram_thread = threading.Thread(target=telegram_sender, daemon=True)
+
+fetch_thread.start()
+telegram_thread.start()
 
 if __name__ == "__main__":
-    print("Starting Discord message dashboard...")
-    print("Open http://127.0.0.1:5001 in your browser")
-    app.run(debug=True, use_reloader=False, port=5001)
-
-    # app.run(debug=True, use_reloader=False)
+    port = 5001
+    print(f"Starting Flask server on http://127.0.0.1:{port}")
+    # Check if port is available
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(('127.0.0.1', port)) == 0:
+            print(
+                f"Port {port} is already in use. Please free it or use a different port.")
+            exit(1)
+    app.run(debug=True, use_reloader=False, port=port)
